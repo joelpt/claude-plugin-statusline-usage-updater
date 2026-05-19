@@ -1,0 +1,9 @@
+{
+  "name": "statusline-usage-updater",
+  "version": "0.1.1",
+  "description": "Nightly auto-calibration of the statusline %w (weekly-quota burn) coefficient by comparing realized 7-day rate-limit utilization against realized session token volume. Also drives a peak-hour warning glyph.",
+  "author": {
+    "name": "Joel Thornton",
+    "email": "joelpt@gmail.com"
+  }
+}
