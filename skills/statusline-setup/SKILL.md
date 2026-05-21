@@ -107,7 +107,7 @@ If the research said peak hours are not currently enforced, leave it as `""`.
 Note the `${CLAUDE_PLUGIN_ROOT}` token expansion — at install time, replace it with the absolute path returned by:
 
 ```bash
-echo "${CLAUDE_PLUGIN_ROOT:-$HOME/code/claude-plugins/plugins/statusline-usage-updater}"
+echo "${CLAUDE_PLUGIN_ROOT:-$HOME/code/claude-plugin-statusline-usage-updater}"
 ```
 
 ---

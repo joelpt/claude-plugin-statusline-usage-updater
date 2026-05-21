@@ -41,7 +41,7 @@ The `/statusline-setup` skill is interactive — it locates your statusline, sho
 To install manually instead:
 
 ```bash
-PLUGIN_ROOT="$HOME/code/claude-plugins/plugins/statusline-usage-updater"
+PLUGIN_ROOT="$HOME/code/claude-plugin-statusline-usage-updater"
 
 # Install the launchd job (daily 03:17 local time)
 "$PLUGIN_ROOT/launchd/install.sh"
