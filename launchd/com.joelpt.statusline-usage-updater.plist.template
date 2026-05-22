@@ -5,11 +5,13 @@
     <key>Label</key>
     <string>com.joelpt.statusline-usage-updater</string>
 
-    <!-- Absolute paths: LaunchAgents do not inherit shell env. -->
+    <!-- Stable shim: resolves the actual binary at run time (dev repo first,
+         then latest cache version). The plist never needs re-rendering on
+         plugin version bumps. -->
     <key>ProgramArguments</key>
     <array>
-        <string>@@PYTHON3@@</string>
-        <string>@@PLUGIN_ROOT@@/bin/update_coefficient.py</string>
+        <string>/bin/bash</string>
+        <string>@@STATE_DIR@@/run-updater.sh</string>
     </array>
 
     <!-- Run once daily at 03:17 local time. Off-peak by every interpretation.
