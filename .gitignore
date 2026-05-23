@@ -10,3 +10,10 @@ dist/
 build/
 .search-rag/
 .lance-rag/
+# Runtime artifacts written by Claude Code into the repo-root .claude/ dir.
+# Root-anchored (/.claude/) so nested test fixtures with a .claude/ subdir
+# are unaffected. Specific patterns rather than a blanket dir ignore so that
+# intentional project config (.claude/settings.json, commands/, etc.) can be
+# tracked without --force if ever needed.
+/.claude/*.lock
+/.claude/*.tmp
