@@ -1,6 +1,6 @@
 ---
 name: statusline-update-now
-description: Trigger an immediate recomputation of the statusline %w coefficient — useful for testing after install, after the user changes statusline paths, or to debug a stale value. Use when the user says "update the statusline coefficient now" or "/statusline-update".
+description: Recompute statusline coefficient now
 ---
 
 # Statusline Usage Updater — Run Now

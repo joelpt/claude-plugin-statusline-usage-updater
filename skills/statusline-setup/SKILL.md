@@ -1,6 +1,6 @@
 ---
 name: statusline-setup
-description: Interactive first-time setup for the statusline-usage-updater plugin — analyzes the user's statusline, inserts the auto-calibrated %w anchor, installs the nightly launchd job, and walks through optional features. Use when the user invokes /statusline-setup or asks how to install / configure / wire up the usage-updater plugin.
+description: Install statusline updater
 ---
 
 # Statusline Usage Updater — Setup

@@ -1,6 +1,6 @@
 {
   "name": "statusline-usage-updater",
-  "version": "2026.05.30.1",
+  "version": "2026.05.30.2",
   "description": "Nightly auto-calibration of the statusline %w (weekly-quota burn) coefficient by comparing realized 7-day rate-limit utilization against realized session token volume. Also drives a peak-hour warning glyph.",
   "author": {
     "name": "Joel Thornton",
