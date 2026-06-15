@@ -12,16 +12,18 @@ Three responsibilities, kept in one file to keep the plugin self-contained
   2. Usage fetch: GET https://api.anthropic.com/api/oauth/usage. Returns the
      parsed seven-day utilisation percentage (0–100).
 
-  3. Token aggregation: walk ~/.claude/projects/**.jsonl, sum
-     (input + cache_creation + cache_read + output) tokens per UTC date,
-     deduping by API call requestId because one assistant response is split
-     across multiple JSONL entries (matches the session-report skill's logic).
+  3. Cost aggregation: walk ~/.claude/projects/**.jsonl, sum COST-WEIGHTED
+     micro-USD per UTC date (see pricing.py), deduping by message.id because one
+     assistant response is split across multiple JSONL entries (matches the
+     session-report skill's logic).
 
-The token definition is "every billable token reported by the API across the
-day". Cache reads cost less per token than fresh inputs — but the coefficient
-absorbs that mix. Don't try to "fix" this by re-weighting cache reads at 0.1;
-the whole point of calibrating against realised usage is to let the user's own
-mix drive the number.
+The figure is cost-weighted, not a raw token count: output ~5x input, cache-read
+0.1x, 1h-write 2x. An earlier version summed raw tokens and argued "the
+coefficient absorbs the mix" — but it only absorbs the 7-day AVERAGE mix; a
+session whose input/output/cache ratio differs from that average came out
+mis-scaled. Weighting by real price (here AND in the live session_tokens.py
+helper, via the shared pricing.py) makes the per-session figure proportional to
+actual quota consumption, so the same coefficient is accurate across mixes.
 """
 
 from __future__ import annotations
@@ -36,6 +38,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from pricing import weighted_cost_units  # noqa: E402  # pyright: ignore[reportMissingImports]
 
 
 # Hard-coded from the Claude Code OAuth integration in the menubar app
@@ -307,12 +312,10 @@ def aggregate_tokens_by_day(
                     msg_id = msg.get("id")
                     if not msg_id:
                         continue
-                    tokens = (
-                        int(usage.get("input_tokens") or 0)
-                        + int(usage.get("cache_creation_input_tokens") or 0)
-                        + int(usage.get("cache_read_input_tokens") or 0)
-                        + int(usage.get("output_tokens") or 0)
-                    )
+                    # Cost-weighted micro-USD (see pricing.py), NOT raw tokens.
+                    # The live %w helper uses the identical definition, so the
+                    # coefficient (util% ÷ this) maps cost units → %w accurately.
+                    tokens = weighted_cost_units(usage, msg.get("model"))
                     date = _timestamp_to_utc_date(entry.get("timestamp") or "")
                     if not date:
                         continue

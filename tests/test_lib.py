@@ -41,32 +41,35 @@ class TokenAggregationTests(unittest.TestCase):
             (FIXTURES / "transcript_basic.jsonl").read_bytes()
         )
 
+    # Cost-weighted micro-USD per day (base 5 — fixture carries no model field).
+    # weighted = 5 × (input + 0.1·cache_read + 1.25·cache_create + 5·output):
+    #   2026-05-13 msg_A final: 5×(100 + 0.1·1000 + 1.25·50 + 5·200)      = 6312
+    #   2026-05-14 msg_B:       5×(10  + 0.1·50000           + 5·40)      = 26050
+    #   2026-05-15 msg_D:       5×(1000+ 0.1·3000 + 1.25·2000 + 5·4000)   = 119000
+    DAY_13, DAY_14, DAY_15 = 6312, 26050, 119000
+
     def test_per_day_totals_dedupe_split_assistant_entries(self):
         # msg_A appears twice with output_tokens 5 then 200 — must take the MAX.
-        # Expected per-day:
-        #   2026-05-13: 100+50+1000+200 = 1350  (msg_A, final block)
-        #   2026-05-14: 10+0+50000+40 = 50050   (msg_B; msg_C has zero usage skipped)
-        #   2026-05-15: 1000+2000+3000+4000 = 10000  (msg_D)
         totals = lib.aggregate_tokens_by_day(self.root)
-        self.assertEqual(totals.get("2026-05-13"), 1350)
-        self.assertEqual(totals.get("2026-05-14"), 50050)
-        self.assertEqual(totals.get("2026-05-15"), 10000)
+        self.assertEqual(totals.get("2026-05-13"), self.DAY_13)
+        self.assertEqual(totals.get("2026-05-14"), self.DAY_14)
+        self.assertEqual(totals.get("2026-05-15"), self.DAY_15)
 
     def test_only_dates_filter_skips_unrequested_days(self):
         totals = lib.aggregate_tokens_by_day(
             self.root, only_dates={"2026-05-14"}
         )
-        self.assertEqual(totals, {"2026-05-14": 50050})
+        self.assertEqual(totals, {"2026-05-14": self.DAY_14})
 
     def test_tokens_in_last_n_days_window(self):
         total, per_day = lib.tokens_in_last_n_days(
             n=3, today_utc="2026-05-15", projects_dir=self.root
         )
         # 13 + 14 + 15 covered
-        self.assertEqual(total, 1350 + 50050 + 10000)
-        self.assertEqual(per_day["2026-05-13"], 1350)
-        self.assertEqual(per_day["2026-05-14"], 50050)
-        self.assertEqual(per_day["2026-05-15"], 10000)
+        self.assertEqual(total, self.DAY_13 + self.DAY_14 + self.DAY_15)
+        self.assertEqual(per_day["2026-05-13"], self.DAY_13)
+        self.assertEqual(per_day["2026-05-14"], self.DAY_14)
+        self.assertEqual(per_day["2026-05-15"], self.DAY_15)
 
 
 class AnchorReplaceTests(unittest.TestCase):
