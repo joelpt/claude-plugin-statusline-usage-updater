@@ -1,7 +1,7 @@
 {
   "name": "statusline-usage-updater",
-  "version": "2026.06.15.1",
-  "description": "Nightly auto-calibration of the statusline %w (weekly-quota burn) coefficient by comparing realized 7-day rate-limit utilization against realized cost-weighted session usage (output 5x input, cache-read 0.1x, 1h-write 2x). The session helper also emits non-idle Claude run-time across the session and its subagents/workflows.",
+  "version": "2026.07.23.1",
+  "description": "Nightly auto-calibration of the statusline %w (weekly-quota burn) coefficient by comparing realized 7-day rate-limit utilization against realized cost-weighted session usage (output 5x input, cache-read 0.1x, 1h-write 2x). The session helper also emits non-idle Claude run-time and total raw token usage across the session and its subagents/workflows.",
   "author": {
     "name": "Joel Thornton",
     "email": "joelpt@gmail.com"

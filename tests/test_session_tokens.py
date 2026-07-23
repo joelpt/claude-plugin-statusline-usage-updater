@@ -38,6 +38,17 @@ def _cost(input_t: int = 0, cache_create: int = 0, cache_read: int = 0,
     }, model)
 
 
+def _tokens(input_t: int = 0, cache_create: int = 0, cache_read: int = 0,
+            output_t: int = 0) -> int:
+    """Raw (non-cost-weighted) token total for one call."""
+    return pricing.raw_token_units({
+        "input_tokens": input_t,
+        "cache_creation_input_tokens": cache_create,
+        "cache_read_input_tokens": cache_read,
+        "output_tokens": output_t,
+    })
+
+
 def _entry(msg_id: str, input_t: int = 0, cache_create: int = 0,
            cache_read: int = 0, output_t: int = 0) -> str:
     """Return a single serialised assistant JSONL line.
@@ -86,14 +97,17 @@ class ScanJsonlTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
 
     def test_sums_all_token_types(self) -> None:
-        """All four token fields contribute to the total."""
+        """All four token fields contribute to the total (cost AND raw tokens)."""
         f = self.root / "a.jsonl"
         _write_jsonl(f, [_entry("msg1", input_t=10, cache_create=20,
                                 cache_read=30, output_t=40)])
         seen: dict[str, int] = {}
-        session_tokens._scan_jsonl(f, seen)
+        seen_tokens: dict[str, int] = {}
+        session_tokens._scan_jsonl(f, seen, seen_tokens)
         self.assertEqual(sum(seen.values()),
                          _cost(input_t=10, cache_create=20, cache_read=30, output_t=40))
+        self.assertEqual(sum(seen_tokens.values()),
+                         _tokens(input_t=10, cache_create=20, cache_read=30, output_t=40))
 
     def test_dedup_takes_max_across_split_entries(self) -> None:
         """When the same message.id appears twice, the higher token count wins."""
@@ -103,9 +117,12 @@ class ScanJsonlTests(unittest.TestCase):
             _entry("msg1", output_t=200),  # final block — correct value
         ])
         seen: dict[str, int] = {}
-        session_tokens._scan_jsonl(f, seen)
+        seen_tokens: dict[str, int] = {}
+        session_tokens._scan_jsonl(f, seen, seen_tokens)
         self.assertEqual(seen["msg1"], _cost(output_t=200))
         self.assertEqual(sum(seen.values()), _cost(output_t=200))
+        self.assertEqual(seen_tokens["msg1"], _tokens(output_t=200))
+        self.assertEqual(sum(seen_tokens.values()), _tokens(output_t=200))
 
     def test_skips_non_assistant_entries(self) -> None:
         """Lines with type != 'assistant' contribute zero tokens."""
@@ -115,8 +132,10 @@ class ScanJsonlTests(unittest.TestCase):
             _entry("msg1", output_t=50) + "\n"
         )
         seen: dict[str, int] = {}
-        session_tokens._scan_jsonl(f, seen)
+        seen_tokens: dict[str, int] = {}
+        session_tokens._scan_jsonl(f, seen, seen_tokens)
         self.assertEqual(sum(seen.values()), _cost(output_t=50))
+        self.assertEqual(sum(seen_tokens.values()), _tokens(output_t=50))
 
     def test_skips_entries_without_message_id(self) -> None:
         """Entries whose message has no id are silently skipped."""
@@ -126,14 +145,18 @@ class ScanJsonlTests(unittest.TestCase):
             "message": {"usage": {"input_tokens": 99, "output_tokens": 1}},
         }) + "\n")
         seen: dict[str, int] = {}
-        session_tokens._scan_jsonl(f, seen)
+        seen_tokens: dict[str, int] = {}
+        session_tokens._scan_jsonl(f, seen, seen_tokens)
         self.assertEqual(sum(seen.values()), 0)
+        self.assertEqual(sum(seen_tokens.values()), 0)
 
     def test_tolerates_missing_file(self) -> None:
-        """A non-existent path leaves seen_max unchanged (no exception)."""
+        """A non-existent path leaves seen_max/seen_tokens unchanged (no exception)."""
         seen: dict[str, int] = {}
-        session_tokens._scan_jsonl(self.root / "missing.jsonl", seen)
+        seen_tokens: dict[str, int] = {}
+        session_tokens._scan_jsonl(self.root / "missing.jsonl", seen, seen_tokens)
         self.assertEqual(seen, {})
+        self.assertEqual(seen_tokens, {})
 
 
 class ScanSubagentsTests(unittest.TestCase):
@@ -151,7 +174,7 @@ class ScanSubagentsTests(unittest.TestCase):
     def test_root_only_when_no_subagents_dir(self) -> None:
         """Returns root tokens when no subagents directory exists."""
         self.assertEqual(session_tokens._scan(self.transcript),
-                         (_cost(output_t=1000), 0))
+                         (_cost(output_t=1000), 0, _tokens(output_t=1000)))
 
     def test_subagent_tokens_added_to_root(self) -> None:
         """Tokens from subagents/*.jsonl are summed with root tokens."""
@@ -159,7 +182,8 @@ class ScanSubagentsTests(unittest.TestCase):
         sub_dir.mkdir(parents=True)
         _write_jsonl(sub_dir / "agent-001.jsonl", [_entry("sub_msg", output_t=500)])
         self.assertEqual(session_tokens._scan(self.transcript),
-                         (_cost(output_t=1000) + _cost(output_t=500), 0))
+                         (_cost(output_t=1000) + _cost(output_t=500), 0,
+                          _tokens(output_t=1000) + _tokens(output_t=500)))
 
     def test_multiple_subagents_all_counted(self) -> None:
         """All subagent files contribute to the total."""
@@ -170,7 +194,9 @@ class ScanSubagentsTests(unittest.TestCase):
         _write_jsonl(sub_dir / "agent-003.jsonl", [_entry("sub3", output_t=300)])
         self.assertEqual(session_tokens._scan(self.transcript),
                          (_cost(output_t=1000) + _cost(output_t=100)
-                          + _cost(output_t=200) + _cost(output_t=300), 0))
+                          + _cost(output_t=200) + _cost(output_t=300), 0,
+                          _tokens(output_t=1000) + _tokens(output_t=100)
+                          + _tokens(output_t=200) + _tokens(output_t=300)))
 
     def test_disjoint_ids_no_cross_file_collision(self) -> None:
         """Root and subagent message IDs are independent — no over-dedup."""
@@ -179,7 +205,8 @@ class ScanSubagentsTests(unittest.TestCase):
         # Use a completely different ID in the subagent — should not dedup with root.
         _write_jsonl(sub_dir / "agent-001.jsonl", [_entry("different_id", output_t=500)])
         self.assertEqual(session_tokens._scan(self.transcript),
-                         (_cost(output_t=1000) + _cost(output_t=500), 0))
+                         (_cost(output_t=1000) + _cost(output_t=500), 0,
+                          _tokens(output_t=1000) + _tokens(output_t=500)))
 
     def test_meta_json_files_ignored(self) -> None:
         """Non-.jsonl files (e.g. .meta.json) in subagents/ are skipped."""
@@ -187,7 +214,7 @@ class ScanSubagentsTests(unittest.TestCase):
         sub_dir.mkdir(parents=True)
         (sub_dir / "agent-001.meta.json").write_text('{"agentType":"general-purpose"}')
         self.assertEqual(session_tokens._scan(self.transcript),
-                         (_cost(output_t=1000), 0))
+                         (_cost(output_t=1000), 0, _tokens(output_t=1000)))
 
     def test_same_id_across_root_and_subagent_takes_max(self) -> None:
         """If IDs collide across files, max-dedup undercounts slightly but doesn't crash.
@@ -202,7 +229,7 @@ class ScanSubagentsTests(unittest.TestCase):
         # Root has root_msg cost(1000), subagent has root_msg cost(2000).
         # Max-dedup takes the higher and ignores the other → cost(2000), not their sum.
         self.assertEqual(session_tokens._scan(self.transcript),
-                         (_cost(output_t=2000), 0))
+                         (_cost(output_t=2000), 0, _tokens(output_t=2000)))
 
 
 class FingerprintTests(unittest.TestCase):
@@ -286,31 +313,41 @@ class CacheTests(unittest.TestCase):
         return buf.getvalue().strip()
 
     def test_first_run_returns_total(self) -> None:
-        """First run computes and prints "<cost> <active_s>" (no timestamps → 0)."""
-        self.assertEqual(self._run_main(), f"{_cost(output_t=777)} 0")
+        """First run computes and prints "<cost> <active_s> <tokens>" (no timestamps → 0)."""
+        self.assertEqual(self._run_main(),
+                         f"{_cost(output_t=777)} 0 {_tokens(output_t=777)}")
 
     def test_cache_hit_returns_same_value(self) -> None:
         """Second run with unchanged transcript returns cached value."""
-        self.assertEqual(self._run_main(), f"{_cost(output_t=777)} 0")
-        self.assertEqual(self._run_main(), f"{_cost(output_t=777)} 0")
+        expected = f"{_cost(output_t=777)} 0 {_tokens(output_t=777)}"
+        self.assertEqual(self._run_main(), expected)
+        self.assertEqual(self._run_main(), expected)
 
     def test_cache_miss_when_transcript_grows(self) -> None:
         """Adding to the root transcript busts the cache."""
-        self.assertEqual(self._run_main(), f"{_cost(output_t=777)} 0")
+        self.assertEqual(self._run_main(),
+                         f"{_cost(output_t=777)} 0 {_tokens(output_t=777)}")
         # Append a new message to the transcript.
         with self.transcript.open("a") as f:
             f.write(_entry("msg2", output_t=100) + "\n")
-        self.assertEqual(self._run_main(),
-                         f"{_cost(output_t=777) + _cost(output_t=100)} 0")
+        self.assertEqual(
+            self._run_main(),
+            f"{_cost(output_t=777) + _cost(output_t=100)} 0 "
+            f"{_tokens(output_t=777) + _tokens(output_t=100)}",
+        )
 
     def test_cache_miss_when_subagent_added(self) -> None:
         """Adding a new subagent file busts the cache (sub_count changes)."""
-        self.assertEqual(self._run_main(), f"{_cost(output_t=777)} 0")
+        self.assertEqual(self._run_main(),
+                         f"{_cost(output_t=777)} 0 {_tokens(output_t=777)}")
         sub_dir = self.transcript.parent / "sess1" / "subagents"
         sub_dir.mkdir(parents=True)
         _write_jsonl(sub_dir / "agent-001.jsonl", [_entry("sub1", output_t=123)])
-        self.assertEqual(self._run_main(),
-                         f"{_cost(output_t=777) + _cost(output_t=123)} 0")
+        self.assertEqual(
+            self._run_main(),
+            f"{_cost(output_t=777) + _cost(output_t=123)} 0 "
+            f"{_tokens(output_t=777) + _tokens(output_t=123)}",
+        )
 
     def test_cache_miss_when_subagent_grows(self) -> None:
         """Growing an existing subagent file busts the cache (sub_max_mtime changes)."""
@@ -319,14 +356,20 @@ class CacheTests(unittest.TestCase):
         f = sub_dir / "agent-001.jsonl"
         _write_jsonl(f, [_entry("sub1", output_t=50)])
         os.utime(f, (1000.0, 1000.0))
-        self.assertEqual(self._run_main(),
-                         f"{_cost(output_t=777) + _cost(output_t=50)} 0")
+        self.assertEqual(
+            self._run_main(),
+            f"{_cost(output_t=777) + _cost(output_t=50)} 0 "
+            f"{_tokens(output_t=777) + _tokens(output_t=50)}",
+        )
         # Grow the file, bump its mtime.
         with f.open("a") as fp:
             fp.write(_entry("sub2", output_t=50) + "\n")
         os.utime(f, (2000.0, 2000.0))
-        self.assertEqual(self._run_main(),
-                         f"{_cost(output_t=777) + 2 * _cost(output_t=50)} 0")
+        self.assertEqual(
+            self._run_main(),
+            f"{_cost(output_t=777) + 2 * _cost(output_t=50)} 0 "
+            f"{_tokens(output_t=777) + 2 * _tokens(output_t=50)}",
+        )
 
 
 class MainEdgeCaseTests(unittest.TestCase):

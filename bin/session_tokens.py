@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Statusline helper: print one session's cost-weighted usage AND active time.
+"""Statusline helper: print one session's cost-weighted usage, active time,
+AND raw token usage.
 
 Called once per statusline refresh, so it has to be fast even for multi-MB
 transcripts. Caches a result keyed by (transcript mtime+size, sidecar dir
 fingerprint). Returns the cached values instantly when nothing has changed.
 
-Output (single line, two space-separated integers):
-  "<cost_units> <active_seconds>"
+Output (single line, three space-separated integers):
+  "<cost_units> <active_seconds> <total_tokens>"
   - cost_units: cost-weighted micro-USD across the session + all subagents AND
     workflows (see pricing.py — output 5x input, cache-read 0.1x, 1h-write 2x).
     Matches lib.aggregate_tokens_by_day's definition, so the %w coefficient
@@ -17,6 +18,9 @@ Output (single line, two space-separated integers):
     subagent/workflow file — inter-entry gaps >5min (HITL waits, idle) excluded.
     This is total Claude *compute* time (parallel subagents add up), not
     wall-clock.
+  - total_tokens: raw (non-cost-weighted) input + output + cache_read +
+    cache_creation tokens across the session + all subagents AND workflows
+    (see pricing.py:raw_token_units). Same message.id dedup as cost_units.
 
 Sidecar transcripts live under <session-id>/ — subagents/*.jsonl,
 subagents/workflows/wf_*/agent-*.jsonl, etc. We recurse the whole sidecar dir so
@@ -36,7 +40,10 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pricing import weighted_cost_units  # noqa: E402  # pyright: ignore[reportMissingImports]
+from pricing import (  # noqa: E402  # pyright: ignore[reportMissingImports]
+    raw_token_units,
+    weighted_cost_units,
+)
 
 _IDLE_GAP_S = 5 * 60  # inter-entry gaps longer than this are idle, not work
 
@@ -138,13 +145,16 @@ def _parse_ts(ts: str) -> float | None:
         return None
 
 
-def _scan_jsonl(path: Path, seen_max: dict[str, int]) -> float:
-    """Scan one JSONL file: merge cost units into seen_max, return active seconds.
+def _scan_jsonl(
+    path: Path, seen_max: dict[str, int], seen_tokens: dict[str, int]
+) -> float:
+    """Scan one JSONL file: merge cost/token units into seen_max/seen_tokens.
 
-    Cost dedup-by-message-ID invariant: one assistant API response is serialised
-    across multiple entries sharing the same message.id; only the final entry
-    carries the accurate output_tokens (hence the highest cost). Taking the max
-    cost across entries with the same ID gives the correct final value.
+    Cost and token dedup-by-message-ID invariant: one assistant API response is
+    serialised across multiple entries sharing the same message.id; only the
+    final entry carries the accurate output_tokens (hence the highest cost and
+    token count). Taking the max across entries with the same ID gives the
+    correct final value for each.
 
     Active seconds: sum of gaps between consecutive entry timestamps in this file
     that are shorter than the idle threshold — i.e. time the agent was actually
@@ -153,6 +163,8 @@ def _scan_jsonl(path: Path, seen_max: dict[str, int]) -> float:
     Args:
         path: JSONL file to scan (root transcript or a subagent/workflow file).
         seen_max: Mutable dict mapping message ID -> highest observed cost units.
+        seen_tokens: Mutable dict mapping message ID -> highest observed raw
+            token count.
 
     Returns:
         Active (non-idle) seconds within this file.
@@ -181,6 +193,9 @@ def _scan_jsonl(path: Path, seen_max: dict[str, int]) -> float:
                 cost = weighted_cost_units(usage, msg.get("model"))
                 if cost > seen_max.get(mid, 0):
                     seen_max[mid] = cost
+                tokens = raw_token_units(usage)
+                if tokens > seen_tokens.get(mid, 0):
+                    seen_tokens[mid] = tokens
     except OSError:
         return 0.0
     times.sort()
@@ -192,32 +207,34 @@ def _scan_jsonl(path: Path, seen_max: dict[str, int]) -> float:
     return active
 
 
-def _scan(transcript: Path) -> tuple[int, int]:
+def _scan(transcript: Path) -> tuple[int, int, int]:
     """Scan the root transcript + entire sidecar tree (subagents AND workflows).
 
     Root and sidecar message IDs are disjoint in practice (each is an independent
-    API request with a unique id), so the shared seen_max dict accumulates all
-    without collision. Active time is summed per file — parallel subagents add up
-    to total compute time, which is the intent.
+    API request with a unique id), so the shared seen_max/seen_tokens dicts
+    accumulate all without collision. Active time is summed per file — parallel
+    subagents add up to total compute time, which is the intent.
 
     Returns:
-        (total_cost_units, total_active_seconds) across the whole session.
+        (total_cost_units, total_active_seconds, total_tokens) across the whole
+        session.
     """
     seen_max: dict[str, int] = {}
-    active = _scan_jsonl(transcript, seen_max)
+    seen_tokens: dict[str, int] = {}
+    active = _scan_jsonl(transcript, seen_max, seen_tokens)
     sidecar = transcript.parent / transcript.stem
     if sidecar.is_dir():
         try:
             for sub in sidecar.rglob("*.jsonl"):
                 if sub.is_file():
-                    active += _scan_jsonl(sub, seen_max)
+                    active += _scan_jsonl(sub, seen_max, seen_tokens)
         except OSError:
             pass
-    return sum(seen_max.values()), int(round(active))
+    return sum(seen_max.values()), int(round(active)), sum(seen_tokens.values())
 
 
 def main(argv: list[str]) -> int:
-    """Print "<cost_units> <active_seconds>" for transcript_path to stdout.
+    """Print "<cost_units> <active_seconds> <total_tokens>" for transcript_path.
 
     Args:
         argv: sys.argv; expects exactly one positional argument (transcript path).
@@ -241,20 +258,21 @@ def main(argv: list[str]) -> int:
     cache_path = _cache_path_for(transcript)
     cached = _load_cache(cache_path)
     if cached is not None:
-        # "cost"/"active_s" present only in the current cache schema; an older
-        # cache (token "total" only) is treated as a miss and rescanned.
+        # "cost"/"active_s"/"tokens" present only in the current cache schema;
+        # an older cache (missing any of these) is treated as a miss and rescanned.
         if (
             cached.get("cost") is not None
             and cached.get("active_s") is not None
+            and cached.get("tokens") is not None
             and cached.get("mtime_ns") == st.st_mtime_ns
             and cached.get("size") == st.st_size
             and cached.get("sub_count") == sub_count
             and cached.get("sub_max_mtime_ns") == sub_max_mtime_ns
         ):
-            print(f"{cached['cost']} {cached['active_s']}")
+            print(f"{cached['cost']} {cached['active_s']} {cached['tokens']}")
             return 0
 
-    cost, active_s = _scan(transcript)
+    cost, active_s, tokens = _scan(transcript)
     _save_cache(
         cache_path,
         {
@@ -264,9 +282,10 @@ def main(argv: list[str]) -> int:
             "sub_max_mtime_ns": sub_max_mtime_ns,
             "cost": cost,
             "active_s": active_s,
+            "tokens": tokens,
         },
     )
-    print(f"{cost} {active_s}")
+    print(f"{cost} {active_s} {tokens}")
     return 0
 
 

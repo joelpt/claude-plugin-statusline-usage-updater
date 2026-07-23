@@ -40,6 +40,30 @@ def base_rate(model):
     return _DEFAULT_BASE
 
 
+def raw_token_units(usage):
+    """Total raw tokens for one API call: input + output + cache_read + cache_creation.
+
+    Unlike weighted_cost_units, this is NOT cost-weighted — every token counts
+    once regardless of type. Used for the statusline's plain token-count display
+    (as opposed to the %w quota-burn figure, which needs the cost weighting).
+    """
+    if not usage:
+        return 0
+    cc = usage.get("cache_creation") or {}
+    if cc:
+        cache_creation = int(cc.get("ephemeral_1h_input_tokens") or 0) + int(
+            cc.get("ephemeral_5m_input_tokens") or 0
+        )
+    else:
+        cache_creation = int(usage.get("cache_creation_input_tokens") or 0)
+    return (
+        int(usage.get("input_tokens") or 0)
+        + int(usage.get("output_tokens") or 0)
+        + int(usage.get("cache_read_input_tokens") or 0)
+        + cache_creation
+    )
+
+
 def weighted_cost_units(usage, model):
     """Integer micro-USD for one API call's usage.
 

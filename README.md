@@ -125,7 +125,7 @@ Range is `start-end` in Pacific Time (24h, inclusive start, exclusive end). The 
 
 ## Troubleshooting
 
-- **`%w` shows nothing on the bar.** The session-token helper couldn't read the transcript, the coefficient anchor is missing, or `session_tokens` came back as zero. Run `python3 $PLUGIN_ROOT/bin/session_tokens.py "$(jq -r .transcript_path < ~/.claude/statusline-last-input.json)"` — should print an integer.
+- **`%w` shows nothing on the bar.** The session-token helper couldn't read the transcript, the coefficient anchor is missing, or `session_tokens` came back as zero. Run `python3 $PLUGIN_ROOT/bin/session_tokens.py "$(jq -r .transcript_path < ~/.claude/statusline-last-input.json)"` — should print three space-separated integers (`<cost_units> <active_seconds> <total_tokens>`).
 - **Coefficient stuck on bootstrap value.** Check `~/.claude/statusline-usage-updater/log/YYYY-MM.log`. Most common cause: launchd job didn't fire. Try `launchctl print gui/$(id -u)/com.joelpt.statusline-usage-updater`.
 - **`refresh rejected`.** Delete `~/.claude/statusline-usage-updater/auth-cache.json` and retry — that forces re-adoption from Claude Code's credentials.
 - **`%w` drifts wildly between sessions on the same day.** Expected for the first ~7 days while samples accumulate. After that, drift > 30% from `1w:` value suggests a usage-pattern shift (e.g. you switched from Sonnet to Opus); give it another week.
