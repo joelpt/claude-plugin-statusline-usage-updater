@@ -18,9 +18,12 @@ Output (single line, three space-separated integers):
     subagent/workflow file — inter-entry gaps >5min (HITL waits, idle) excluded.
     This is total Claude *compute* time (parallel subagents add up), not
     wall-clock.
-  - total_tokens: raw (non-cost-weighted) input + output + cache_read +
-    cache_creation tokens across the session + all subagents AND workflows
-    (see pricing.py:raw_token_units). Same message.id dedup as cost_units.
+  - total_tokens: "fresh" (non-cost-weighted) input + output + cache_creation
+    tokens across the session + all subagents AND workflows — deliberately
+    EXCLUDES cache_read_input_tokens, which re-counts the same accumulated
+    context on every turn and would otherwise balloon into the tens of
+    millions without reflecting new work (see pricing.py:fresh_token_units).
+    Same message.id dedup as cost_units.
 
 Sidecar transcripts live under <session-id>/ — subagents/*.jsonl,
 subagents/workflows/wf_*/agent-*.jsonl, etc. We recurse the whole sidecar dir so
@@ -41,7 +44,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pricing import (  # noqa: E402  # pyright: ignore[reportMissingImports]
-    raw_token_units,
+    fresh_token_units,
     weighted_cost_units,
 )
 
@@ -193,7 +196,7 @@ def _scan_jsonl(
                 cost = weighted_cost_units(usage, msg.get("model"))
                 if cost > seen_max.get(mid, 0):
                     seen_max[mid] = cost
-                tokens = raw_token_units(usage)
+                tokens = fresh_token_units(usage)
                 if tokens > seen_tokens.get(mid, 0):
                     seen_tokens[mid] = tokens
     except OSError:

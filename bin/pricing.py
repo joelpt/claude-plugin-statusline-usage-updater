@@ -40,12 +40,19 @@ def base_rate(model):
     return _DEFAULT_BASE
 
 
-def raw_token_units(usage):
-    """Total raw tokens for one API call: input + output + cache_read + cache_creation.
+def fresh_token_units(usage):
+    """"Fresh" tokens for one API call: input + output + cache_creation.
+
+    Deliberately EXCLUDES cache_read_input_tokens. In a long session, every
+    turn re-reads the full accumulated context as a cache read — summing that
+    across turns balloons into the tens of millions and mostly reflects the
+    same content re-processed repeatedly, not new work. Excluding it gives a
+    number that tracks actual session output/effort instead of turn count.
 
     Unlike weighted_cost_units, this is NOT cost-weighted — every token counts
     once regardless of type. Used for the statusline's plain token-count display
-    (as opposed to the %w quota-burn figure, which needs the cost weighting).
+    (as opposed to the %w quota-burn figure, which needs the cost weighting and
+    DOES include cache reads, since they still cost money).
     """
     if not usage:
         return 0
@@ -59,7 +66,6 @@ def raw_token_units(usage):
     return (
         int(usage.get("input_tokens") or 0)
         + int(usage.get("output_tokens") or 0)
-        + int(usage.get("cache_read_input_tokens") or 0)
         + cache_creation
     )
 

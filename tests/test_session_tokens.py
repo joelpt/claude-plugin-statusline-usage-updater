@@ -40,8 +40,8 @@ def _cost(input_t: int = 0, cache_create: int = 0, cache_read: int = 0,
 
 def _tokens(input_t: int = 0, cache_create: int = 0, cache_read: int = 0,
             output_t: int = 0) -> int:
-    """Raw (non-cost-weighted) token total for one call."""
-    return pricing.raw_token_units({
+    """"Fresh" (non-cost-weighted, cache-read-excluded) token total for one call."""
+    return pricing.fresh_token_units({
         "input_tokens": input_t,
         "cache_creation_input_tokens": cache_create,
         "cache_read_input_tokens": cache_read,
@@ -97,7 +97,7 @@ class ScanJsonlTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
 
     def test_sums_all_token_types(self) -> None:
-        """All four token fields contribute to the total (cost AND raw tokens)."""
+        """All four fields contribute to cost; fresh tokens exclude cache_read."""
         f = self.root / "a.jsonl"
         _write_jsonl(f, [_entry("msg1", input_t=10, cache_create=20,
                                 cache_read=30, output_t=40)])
